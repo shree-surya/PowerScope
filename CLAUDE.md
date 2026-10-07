@@ -1,10 +1,9 @@
-# CLAUDE.md: PowerScope and GridGuard
+# CLAUDE.md: PowerScope
 
 Context for continuing this project. Read README.md first for the layout.
 
 ## What this is
-Two ESP32 products for single-phase 230 V, 6 A loads, sold as student/demo builds.
-PowerScope measures and shows. GridGuard measures and cuts the relay on over/under voltage and current.
+An ESP32 energy monitor for single-phase 230 V, 6 A loads, sold as a student/demo build. It measures and shows; it does not switch or protect the load.
 Discuss design questions with the owner before generating code; they confirm scope step by step.
 
 ## Hardware (dev unit)
@@ -15,8 +14,7 @@ Discuss design questions with the owner before generating code; they confirm sco
 | ACS712-20A OUT | same divider -> GPIO35. IP+/IP- in series with LIVE. |
 | OLED 1.3" SH1106 I2C | SDA 21, SCL 22, 3V3. Final PowerScope uses a 0.96" SSD1306: swap the U8g2 constructor line. |
 | Divider ratio | 2/3, so ACS712 sensitivity at the pin is 100 mV/A x 2/3 = 66.7 mV/A |
-| Planned for GridGuard | relay IN GPIO26 (normally open, live only), buzzer GPIO25, touch pad GPIO27, LEDs GPIO32 green / GPIO33 red (proposed) |
-| Power | Hi-Link HLK-5M05 with 1 A slow-blow fuse, tapped before the relay |
+| Power | Hi-Link HLK-5M05 with 1 A slow-blow fuse, tapped after the MCB |
 
 GPIO34/35 are ADC1, input-only: correct for WiFi use. Do not use ADC2 pins.
 
@@ -59,9 +57,8 @@ No internet in AP mode: no CDN, no Google Fonts. Bai Jamjuree (500, 700) is embe
 ## Agreed next tasks
 1. **Calibration page** (firmware + web). Zero-current button. Voltage and current calibration in both ways: type the multimeter/clamp reading and let the device compute the gain/trim, or type the numbers. Advanced: SHIFT and I_SIGN with a live PF check. Move V_GAIN, I_TRIM, SHIFT, I_SIGN into flash. Restore defaults. 4-digit PIN (default 1234, changeable) for calibration changes and resets.
 2. **Energy history and bill estimate.** Phone sends the time when the page opens (`POST /time?epoch=&tz=`), device keeps it with millis(). Energy used before the first time sync is held aside and added to "today" when the time arrives. Keep 62 days and 12 months in flash. Show today and this month in kWh and rupees, a 30-day chart, a 12-month chart, CSV download (client side), and a month-end projection. Flat rate only. Calendar-month billing with an optional start day.
-3. **GridGuard firmware and page**, from docs/GridGuard-spec.md. The simulator inside docs/GridGuard-project-page.html is the reference for the state machine.
-4. Update the two project pages in docs/ for the modular-plate layout (docs/hardware-layout.md): no clear cover, new module order.
-5. Optional noise work: decoupling caps, ACS712-5A, median filter.
+3. Update the project page in docs/ for the modular-plate layout (docs/hardware-layout.md): no clear cover, new module order.
+4. Optional noise work: decoupling caps, ACS712-5A, median filter.
 
 ## Testing
 - `sh tests/host/run.sh` builds the real PowerScope.ino against stubs and feeds it synthetic waves with noise: idle, bursts, 0.39 A air cooler, 2 A heater, small load, and the zero calibration. Extend the stubs when adding firmware features. Last run: idle shows 0 A and 0 kWh, the cooler reads 0.387 A at PF 0.82, the heater 1.998 A.
@@ -72,4 +69,4 @@ No internet in AP mode: no CDN, no Google Fonts. Bai Jamjuree (500, 700) is embe
 ## Conventions
 - Arduino sketches live in a folder with the same name as the .ino.
 - Keep the page self-contained (one file). Regenerate web_index.h after every edit with tools/embed_web.py and commit both.
-- Safety rules for any mains-facing change: switch live only, relay normally open, MCB stays, no bare modules outside a closed box.
+- Safety rules for any mains-facing change: switch live only, MCB stays, no bare modules outside a closed box.

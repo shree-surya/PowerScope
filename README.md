@@ -1,17 +1,17 @@
-# PowerScope and GridGuard
+# PowerScope
 
-Two ESP32 products for single-phase 230 V loads up to 6 A, built into modular wall-plate boxes.
+An ESP32 energy monitor for single-phase 230 V loads up to 6 A, built into a modular wall-plate box.
 
-| | PowerScope | GridGuard |
-|---|---|---|
-| Job | Monitor only | Monitor and protect (relay cut-off) |
-| Shows | Vrms, Irms, P, Q, S, PF, phase angle, crest factor, frequency, kWh | Voltage and current against limits you set |
-| Display | 0.96" OLED (1.3" on the dev unit) | 1.3" OLED |
-| Web | Own WiFi hotspot, live dashboard, trends, scope, energy and cost | Own WiFi hotspot, settings page, event log |
-| Protection | 6A MCB only | 6A MCB plus software trip on a 10A relay |
-| Status | Running on the bench | Designed, firmware not started |
+| | |
+|---|---|
+| Job | Monitor only |
+| Shows | Vrms, Irms, P, Q, S, PF, phase angle, crest factor, frequency, kWh |
+| Display | 0.96" OLED (1.3" on the dev unit) |
+| Web | Own WiFi hotspot, live dashboard, trends, scope, energy and cost |
+| Protection | 6A MCB only |
+| Status | Running on the bench |
 
-Both use the same sensing core: ZMPT101B (voltage) and ACS712-20A (current) into an ESP32, 200 ms windows of ten mains cycles.
+Sensing: ZMPT101B (voltage) and ACS712-20A (current) into an ESP32, 200 ms windows of ten mains cycles.
 
 ## Layout
 
@@ -21,7 +21,7 @@ firmware/bringup/        small test sketches used to bring the sensors up, in or
 web/index.html           the dashboard page (self-contained, font embedded, demo mode)
 tools/embed_web.py       web/index.html -> firmware/PowerScope/web_index.h (gzip in PROGMEM)
 tests/host/              builds the real sketch on a PC against stub libraries, no hardware
-docs/                    BOM, hardware layout, GridGuard spec, idle-noise analysis, project pages
+docs/                    BOM, hardware layout, idle-noise analysis, project page
 CLAUDE.md                context for Claude Code: decisions, constants, open tasks
 ```
 
