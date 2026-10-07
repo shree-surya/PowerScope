@@ -24,10 +24,12 @@ GPIO34/35 are ADC1, input-only: correct for WiFi use. Do not use ADC2 pins.
 - DC midpoint removed per window. Vrms, Irms, P = mean(v*i), S, PF = |P|/S, Q = sqrt(S^2 - P^2), phase = acos(PF), crest factor = Ipk/Irms_raw, frequency from rising crossings with hysteresis.
 - Scope arrays: two cycles (320 samples) starting on a rising voltage crossing.
 - History rings for the web page: 1 s x 600, 5 s x 720, 30 s x 720 (RAM only, lost on reboot).
-- Energy, load-on time, max power and the tariff are saved to flash (Preferences "powerscope") at most every 10 minutes.
+- Energy, load-on time, max power and the tariff are saved to flash (Preferences "powerscope") at most every 10 minutes. There is no energy reset (the owner removed it).
 
-## Calibration constants (currently compile-time, top of PowerScope.ino)
-| Constant | Value | Source |
+## Calibration (flash keys vgain, itrim, shift, isign, inoise; defaults at the top of PowerScope.ino)
+Set from the Calibrate section of the page, behind a 4-digit PIN (flash key "pin", default 1234; five wrong tries lock it for 60 s). Restore defaults puts the five values back and leaves the PIN alone. Changes are applied in loop() between windows. Changing I_TRIM rescales I_NOISE by the same factor, since the noise was measured in amps.
+
+| Constant | Default | Source |
 |---|---|---|
 | V_GAIN | 0.946 | multimeter 242 V against 256 V displayed. An earlier calibration gave 1.00 at 234 V, so the trimmer may have been nudged: recheck. |
 | I_SIGN | -1 | real power read negative on the air cooler with the wiring as built |
@@ -47,21 +49,23 @@ With WiFi on, loads under about 0.17 to 0.2 A (roughly 40 W) cannot be read reli
 | GET /history?r=60 / 600 / 3600 / 21600 | {dt,v[],i[],p[]}, newest last |
 | GET /scope | {v[],i[]}, 320 samples, volts and amps |
 | POST /rate?x= | tariff in rupees per kWh |
-| POST /reset | zero the energy counter (done in loop) |
-| POST /zero | re-measure idle noise (done in loop) |
+| GET /cal | vgain,itrim,inoise,shift,isign, zero (0 never, 1 running, 2 done, 3 refused), zmsg, def{...} |
+| POST /unlock?pin= | check the PIN: {ok:1} or {ok:0,err} |
+| POST /cal?pin=&... | one of vref= (multimeter V), iref= (clamp A, needs >= 0.5 A shown), vgain=, itrim= (0.5 to 2.0), shift= (-20 to 20), isign= (1 or -1), defaults=1. Returns the new values or {ok:0,err} |
+| POST /zero?pin= | re-measure idle noise (done in loop), poll GET /cal for the result |
+| POST /pin?pin=&new= | change the PIN |
 | captive-portal probes | generate_204, gen_204, hotspot-detect.html, connecttest.txt, ncsi.txt, wildcard DNS, notFound redirects to 192.168.4.1 |
 
 The page falls back to demo data only if it has never reached the device. Once it has seen live data it shows "Offline" instead, so fake numbers can never pass as real.
 No internet in AP mode: no CDN, no Google Fonts. Bai Jamjuree (500, 700) is embedded as base64 WOFF2. Palette: bg #0F1115, voltage #35D0FF, current #FF8A3D, power #B6F24A.
 
 ## Agreed next tasks
-1. **Calibration page** (firmware + web). Zero-current button. Voltage and current calibration in both ways: type the multimeter/clamp reading and let the device compute the gain/trim, or type the numbers. Advanced: SHIFT and I_SIGN with a live PF check. Move V_GAIN, I_TRIM, SHIFT, I_SIGN into flash. Restore defaults. 4-digit PIN (default 1234, changeable) for calibration changes and resets.
-2. **Energy history and bill estimate.** Phone sends the time when the page opens (`POST /time?epoch=&tz=`), device keeps it with millis(). Energy used before the first time sync is held aside and added to "today" when the time arrives. Keep 62 days and 12 months in flash. Show today and this month in kWh and rupees, a 30-day chart, a 12-month chart, CSV download (client side), and a month-end projection. Flat rate only. Calendar-month billing with an optional start day.
-3. Update the project page in docs/ for the modular-plate layout (docs/hardware-layout.md): no clear cover, new module order.
-4. Optional noise work: decoupling caps, ACS712-5A, median filter.
+1. **Energy history and bill estimate.** Phone sends the time when the page opens (`POST /time?epoch=&tz=`), device keeps it with millis(). Energy used before the first time sync is held aside and added to "today" when the time arrives. Keep 62 days and 12 months in flash. Show today and this month in kWh and rupees, a 30-day chart, a 12-month chart, CSV download (client side), and a month-end projection. Flat rate only. Calendar-month billing (1st to last day), no start-day option.
+2. Update the project page in docs/ for the modular-plate layout (docs/hardware-layout.md): no clear cover, new module order.
+3. Optional noise work: decoupling caps, ACS712-5A, median filter.
 
 ## Testing
-- `sh tests/host/run.sh` builds the real PowerScope.ino against stubs and feeds it synthetic waves with noise: idle, bursts, 0.39 A air cooler, 2 A heater, small load, and the zero calibration. Extend the stubs when adding firmware features. Last run: idle shows 0 A and 0 kWh, the cooler reads 0.387 A at PF 0.82, the heater 1.998 A.
+- `sh tests/host/run.sh` builds the real PowerScope.ino against stubs and feeds it synthetic waves with noise: idle, bursts, 0.39 A air cooler, 2 A heater, small load, and the zero calibration. The stubs keep Preferences in a map (setup() again acts as a reboot) and keep the web routes, so `call("/cal", HTTP_POST, {{"pin","1234"},...})` runs a real handler; `settle(n)` runs n windows plus the loop work. The run ends with pass/fail checks and exits non-zero on a failure. Extend the stubs when adding firmware features. Last run: idle shows 0 A and 0 kWh, the cooler reads 0.387 A at PF 0.82, the heater 1.998 A.
 - The web page was exercised in jsdom with a mocked device (demo mode, live mode, canvases, range buttons). It has not been looked at on every phone.
 - Not yet verified on hardware: heavy simultaneous phone connections, the timing guard rate with several clients, ACS712 heating near 6 A.
 - Dev unit uses a 20A ACS712 and the owner's own air cooler as the first load. Calibrate current on a resistive load.

@@ -34,6 +34,16 @@ CLAUDE.md                context for Claude Code: decisions, constants, open tas
 
 After editing `web/index.html`: `python tools/embed_web.py`, then upload again.
 
+## Calibrate
+
+Open the **Calibrate** section of the page and enter the PIN (**1234** until you change it). You can:
+- type your multimeter's voltage, or your clamp meter's current on a kettle or heater, and the device corrects itself;
+- zero the current with the load unplugged;
+- nudge the phase shift and the current direction until a kettle reads positive power at PF 1.00;
+- change the PIN, or restore the factory values.
+
+Everything is saved in the ESP32's flash and kept after a power cut.
+
 ## Check the maths without hardware
 
 ```

@@ -109,6 +109,17 @@ section{padding:30px 0 6px}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .note{font-size:13px;color:var(--fg2);min-height:1.3em;margin-top:8px}
 
+/* calibrate */
+.cal{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.cal h3{margin:0 0 4px;font-size:17px;font-weight:700}
+.cal .now{font-size:14px;color:var(--fg2)}
+.cal .now b{color:var(--fg);font-variant-numeric:tabular-nums}
+.cal .hint{font-size:13px;color:var(--muted);margin-top:4px}
+.cal .lab{margin-top:12px}
+.stepper{display:flex;align-items:center;gap:10px;margin-top:8px}
+.stepper b{min-width:92px;text-align:center;font-size:18px;font-variant-numeric:tabular-nums}
+.note.err{color:var(--amp)}
+.lock{max-width:420px}
 footer{margin-top:34px;padding:22px 0 34px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
 </style>
 </head>
@@ -116,7 +127,7 @@ footer{margin-top:34px;padding:22px 0 34px;border-top:1px solid var(--line);colo
 
 <header class="top"><div class="wrap bar">
   <div class="brand"><i></i>PowerScope</div>
-  <nav><a href="#live">Live</a><a href="#trends">Trends</a><a href="#scope">Scope</a><a href="#energy">Energy</a></nav>
+  <nav><a href="#live">Live</a><a href="#trends">Trends</a><a href="#scope">Scope</a><a href="#energy">Energy</a><a href="#cal">Calibrate</a></nav>
   <div class="status" id="status"><i></i><span id="stxt">Connecting</span></div>
 </div></header>
 <div class="banner" id="demo" hidden>Demo data. Open this page from the PowerScope device to see real readings.</div>
@@ -189,24 +200,69 @@ footer{margin-top:34px;padding:22px 0 34px;border-top:1px solid var(--line);colo
 </section>
 
 <section id="energy">
-  <div class="head"><h2>Energy and cost</h2><p>Since the device was switched on or last reset</p></div>
+  <div class="head"><h2>Energy and cost</h2><p>Since the device was first switched on</p></div>
   <div class="energy">
     <div class="card p"><div class="lab">Energy used</div><div class="val"><span id="kwh">--</span><small>kWh</small></div><div class="sub" id="kvah">&nbsp;</div></div>
     <div class="card"><div class="lab">Cost so far</div><div class="val"><small>₹</small><span id="cost">--</span></div><div class="sub" id="ratesub">&nbsp;</div></div>
     <div class="card"><div class="lab">Load on for</div><div class="val" style="font-size:28px"><span id="on">--</span></div><div class="sub" id="up">&nbsp;</div></div>
     <div class="card"><div class="lab">Average power</div><div class="val"><span id="avg">--</span><small>W</small></div><div class="sub">while the load was on</div></div>
-    <div class="card"><div class="lab">Highest power</div><div class="val"><span id="max">--</span><small>W</small></div><div class="sub">peak since reset</div></div>
+    <div class="card"><div class="lab">Highest power</div><div class="val"><span id="max">--</span><small>W</small></div><div class="sub">highest seen so far</div></div>
   </div>
   <div class="ctl">
     <div class="card"><div class="lab">Tariff rate, ₹ per kWh</div>
       <div class="field"><input id="rate" type="number" inputmode="decimal" min="0" step="0.1" aria-label="Rate in rupees per kWh"><button class="btn primary" id="saveRate">Save</button></div>
       <div class="note" id="rnote"></div></div>
     <div class="card"><div class="lab">Data</div>
-      <div class="actions"><button class="btn" id="csv">Download CSV</button><button class="btn danger" id="reset">Reset energy</button></div>
+      <div class="actions"><button class="btn" id="csv">Download CSV</button></div>
       <div class="note" id="dnote">The CSV holds the trend range selected above.</div></div>
   </div>
 </section>
 
+<section id="cal">
+  <div class="head"><h2>Calibrate</h2><p>Changes are saved in the device and kept after a power cut</p></div>
+  <div class="card lock" id="lockCard"><div class="lab">Enter the 4-digit PIN to calibrate</div>
+    <div class="field"><input id="pinIn" type="password" inputmode="numeric" autocomplete="off" maxlength="4" aria-label="PIN"><button class="btn primary" id="unlock">Unlock</button></div>
+    <div class="note" id="pnote">The PIN is 1234 until you change it.</div></div>
+  <div id="calBody" hidden>
+  <div class="cal">
+    <div class="card"><h3 style="color:var(--volt)">Voltage</h3>
+      <div class="now">Showing <b id="cv">--</b> V · gain <b id="cvg">--</b></div>
+      <div class="lab">Your multimeter reads, V</div>
+      <div class="field"><input id="vref" type="number" inputmode="decimal" step="0.1" placeholder="231.0" aria-label="Multimeter reading in volts"><button class="btn primary" data-cal="vref">Apply</button></div>
+      <div class="lab">Or type the gain</div>
+      <div class="field"><input id="vgain" type="number" inputmode="decimal" step="0.0001" aria-label="Voltage gain"><button class="btn" data-cal="vgain">Save</button></div>
+      <div class="note" id="n-vref"></div></div>
+    <div class="card"><h3 style="color:var(--amp)">Current</h3>
+      <div class="now">Showing <b id="ci">--</b> A · trim <b id="cit">--</b></div>
+      <div class="hint">Use a kettle, iron or heater drawing at least 1 A, not a fan or a charger.</div>
+      <div class="lab">Your clamp meter reads, A</div>
+      <div class="field"><input id="iref" type="number" inputmode="decimal" step="0.01" placeholder="4.20" aria-label="Clamp meter reading in amps"><button class="btn primary" data-cal="iref">Apply</button></div>
+      <div class="lab">Or type the trim</div>
+      <div class="field"><input id="itrim" type="number" inputmode="decimal" step="0.0001" aria-label="Current trim"><button class="btn" data-cal="itrim">Save</button></div>
+      <div class="note" id="n-iref"></div></div>
+    <div class="card"><h3>Zero current</h3>
+      <div class="now">Idle noise <b id="cn">--</b> A</div>
+      <div class="hint">Unplug the load, then press Zero. It takes about 10 seconds. Readings below about 1.35 times the noise show as 0 A.</div>
+      <div class="actions"><button class="btn primary" id="zero">Zero</button></div>
+      <div class="note" id="n-zero"></div></div>
+    <div class="card"><h3>Phase and direction <small style="color:var(--muted)">· advanced</small></h3>
+      <div class="now">Now <b id="cp">--</b> W · power factor <b id="cpf">--</b></div>
+      <div class="hint">Connect a kettle or heater. Power should be positive and the power factor 1.00.</div>
+      <div class="lab">Phase shift (one step is 2.25°)</div>
+      <div class="stepper"><button class="btn" data-step="-1" aria-label="Shift down">−</button><b id="cs">--</b><button class="btn" data-step="1" aria-label="Shift up">+</button></div>
+      <div class="lab">Current direction</div>
+      <div class="stepper"><b id="cd" style="text-align:left">--</b><button class="btn" id="flip">Flip</button></div>
+      <div class="note" id="n-adv"></div></div>
+    <div class="card"><h3>PIN and defaults</h3>
+      <div class="lab">New 4-digit PIN</div>
+      <div class="field"><input id="pinNew" type="password" inputmode="numeric" autocomplete="off" maxlength="4" aria-label="New PIN"><button class="btn" id="pinSave">Change PIN</button></div>
+      <div class="lab">Factory values</div>
+      <div class="hint" id="defs">&nbsp;</div>
+      <div class="actions"><button class="btn danger" id="defaults">Restore defaults</button><button class="btn" id="lock">Lock</button></div>
+      <div class="note" id="n-pin"></div></div>
+  </div>
+  </div>
+</section>
 <footer>PowerScope · measured on 230 V mains, accurate to a few percent after calibration. Not a billing meter.</footer>
 </main>
 
@@ -407,7 +463,7 @@ function render(){
   set("avg",fp(d.avg)); set("max",fp(d.max));
   const ri=$("#rate"); if(document.activeElement!==ri)ri.value=fx(d.rate,2);
   live.push(d.p); if(live.length>60)live.shift();
-  drawTri(); drawSpark();
+  drawTri(); drawSpark(); renderCal();
 }
 async function tick(){
   if(!demo){
@@ -455,19 +511,117 @@ async function saveRate(){
     set("rnote","Saved ₹"+fx(x,2)+" per kWh");
   }catch(e){set("rnote","Could not reach the device")}
 }
-async function resetEnergy(){
-  if(!confirm("Reset the energy counter to zero?"))return;
+
+/* ---------------- calibrate ---------------- */
+let pin=null, CAL=null;
+const CAL_DEF={vgain:.946,itrim:1,inoise:.195,shift:0,isign:-1};
+let demoCal=Object.assign({pin:"1234",zero:0,zmsg:"",def:CAL_DEF},CAL_DEF);
+function note(id,t,bad){const e=document.getElementById(id);if(!e)return;e.textContent=t;e.className="note"+(bad?" err":"")}
+/* The demo stands in for the device so the section can be tried without one. */
+function demoApi(path,q){
+  const c=demoCal, ok=Object.assign({ok:1},c);
+  if(path==="/cal"&&!q)return c;
+  if(q.pin!==c.pin)return {ok:0,err:"Wrong PIN"};
+  if(path==="/unlock")return {ok:1};
+  if(path==="/pin"){if(!/^\d{4}$/.test(q.new))return {ok:0,err:"The new PIN must be 4 digits"};c.pin=q.new;return {ok:1}}
+  if(path==="/zero"){c.zero=2;c.zmsg="Done. Idle noise saved.";return {ok:1}}
+  if(q.defaults){Object.assign(c,CAL_DEF);return Object.assign(ok,c)}
+  if(q.vref!=null){if(!(q.vref>=150&&q.vref<=300))return {ok:0,err:"Enter the multimeter reading in volts, such as 231"};c.vgain*=q.vref/S.v}
+  if(q.iref!=null){if(!(S.i>=.5))return {ok:0,err:"Connect a kettle, iron or heater first (at least 0.5 A)"};c.itrim*=q.iref/S.i}
+  if(q.vgain!=null){if(!(q.vgain>=.5&&q.vgain<=2))return {ok:0,err:"The voltage gain must be between 0.5 and 2.0"};c.vgain=+q.vgain}
+  if(q.itrim!=null){if(!(q.itrim>=.5&&q.itrim<=2))return {ok:0,err:"The current trim must be between 0.5 and 2.0"};c.itrim=+q.itrim}
+  if(q.shift!=null){if(Math.abs(q.shift)>20)return {ok:0,err:"The phase shift must be between -20 and 20"};c.shift=+q.shift}
+  if(q.isign!=null)c.isign=+q.isign;
+  return Object.assign({ok:1},c);
+}
+async function api(path,q,method){
+  if(demo)return demoApi(path,q);
+  const qs=q?"?"+Object.keys(q).map(k=>k+"="+encodeURIComponent(q[k])).join("&"):"";
+  return getJSON(path+qs,method?{method:method}:undefined);
+}
+function showCal(c){
+  CAL=c;
+  const fv=$("#vgain"), ft=$("#itrim");
+  if(document.activeElement!==fv)fv.value=fx(c.vgain,4);
+  if(document.activeElement!==ft)ft.value=fx(c.itrim,4);
+  set("cvg",fx(c.vgain,4)); set("cit",fx(c.itrim,4)); set("cn",fx(c.inoise,3));
+  set("cs",(c.shift>0?"+":"")+c.shift+" · "+fx(c.shift*2.25,2)+"°");
+  set("cd",c.isign<0?"Reversed (−1)":"Normal (+1)");
+  const d=c.def; if(d)set("defs","Gain "+fx(d.vgain,4)+", trim "+fx(d.itrim,4)+", noise "+fx(d.inoise,3)+" A, shift "+d.shift+", direction "+(d.isign<0?"−1":"+1")+". The PIN is not changed.");
+}
+function renderCal(){
+  if(!S||$("#calBody").hidden)return;
+  set("cv",fx(S.v,1)); set("ci",fx(S.i,3)); set("cp",fp(S.p)); set("cpf",fx(S.pf,2));
+}
+async function unlock(){
+  const p=$("#pinIn").value.trim();
+  if(!/^\d{4}$/.test(p)){note("pnote","Enter 4 digits",true);return}
   try{
-    if(demo){dm={kwh:0,on:0,max:0,sumP:0,n:0,last:0}} else await getJSON("/reset",{method:"POST"});
-    set("dnote","Energy counter reset.");
-  }catch(e){set("dnote","Could not reach the device")}
+    const r=await api("/unlock",{pin:p},"POST");
+    if(!r.ok){note("pnote",r.err,true);return}
+    pin=p; $("#pinIn").value=""; note("pnote","");
+    showCal(await api("/cal"));
+    $("#lockCard").hidden=true; $("#calBody").hidden=false; renderCal();
+  }catch(e){note("pnote","Could not reach the device",true)}
+}
+function lock(){pin=null;$("#calBody").hidden=true;$("#lockCard").hidden=false;note("pnote","Locked.")}
+/* Sends one change. On a wrong PIN (changed elsewhere, or locked out) the section locks again. */
+async function change(q,noteId,okText){
+  try{
+    const r=await api("/cal",Object.assign({pin:pin},q),"POST");
+    if(!r.ok){note(noteId,r.err,true);if(/PIN|tries/.test(r.err))lock();return false}
+    showCal(r); note(noteId,okText); return true;
+  }catch(e){note(noteId,"Could not reach the device",true);return false}
+}
+async function calField(key){
+  const x=parseFloat($("#"+key).value), id=key[0]==="v"?"n-vref":"n-iref";
+  if(!isFinite(x)){note(id,"Enter a number first",true);return}
+  const okText={vref:"Saved. The voltage should now read "+fx(x,1)+" V.",iref:"Saved. The current should now read "+fx(x,2)+" A.",
+    vgain:"Voltage gain saved.",itrim:"Current trim saved."}[key];
+  const q={}; q[key]=x;
+  if(await change(q,id,okText)&&(key==="vref"||key==="iref"))$("#"+key).value="";
+}
+async function zero(){
+  if(!confirm("Unplug the load first. Measure the idle current noise now?"))return;
+  try{
+    const r=await api("/zero",{pin:pin},"POST");
+    if(!r.ok){note("n-zero",r.err,true);if(/PIN|tries/.test(r.err))lock();return}
+    note("n-zero","Measuring, keep the load unplugged...");
+    for(let k=0;k<20;k++){
+      await new Promise(res=>setTimeout(res,1000));
+      const c=await api("/cal").catch(()=>null);
+      if(c&&c.zero!==1){showCal(c);note("n-zero",c.zmsg,c.zero!==2);return}
+    }
+    note("n-zero","No answer from the device. Try again.",true);
+  }catch(e){note("n-zero","Could not reach the device",true)}
+}
+async function changePin(){
+  const n=$("#pinNew").value.trim();
+  if(!/^\d{4}$/.test(n)){note("n-pin","The new PIN must be 4 digits",true);return}
+  try{
+    const r=await api("/pin",{pin:pin,new:n},"POST");
+    if(!r.ok){note("n-pin",r.err,true);return}
+    pin=n; $("#pinNew").value=""; note("n-pin","PIN changed. Write it down.");
+  }catch(e){note("n-pin","Could not reach the device",true)}
+}
+async function restoreDefaults(){
+  if(!confirm("Put the gain, trim, noise, phase shift and direction back to the factory values?"))return;
+  change({defaults:1},"n-pin","Factory values restored.");
 }
 
 $$("#chips .chip").forEach(b=>b.addEventListener("click",()=>setRange(+b.dataset.r)));
 $("#pause").addEventListener("click",e=>{paused=!paused;e.target.textContent=paused?"Resume":"Pause"});
 $("#csv").addEventListener("click",csv);
 $("#saveRate").addEventListener("click",saveRate);
-$("#reset").addEventListener("click",resetEnergy);
+$("#unlock").addEventListener("click",unlock);
+$("#pinIn").addEventListener("keydown",e=>{if(e.key==="Enter")unlock()});
+$$("[data-cal]").forEach(b=>b.addEventListener("click",()=>calField(b.dataset.cal)));
+$$("[data-step]").forEach(b=>b.addEventListener("click",()=>{if(CAL)change({shift:CAL.shift+ +b.dataset.step},"n-adv","Phase shift saved. Watch the power factor.")}));
+$("#flip").addEventListener("click",()=>{if(CAL)change({isign:-CAL.isign},"n-adv","Direction saved. With a kettle, power should be positive.")});
+$("#zero").addEventListener("click",zero);
+$("#pinSave").addEventListener("click",changePin);
+$("#defaults").addEventListener("click",restoreDefaults);
+$("#lock").addEventListener("click",lock);
 window.addEventListener("resize",()=>{drawCharts();drawScope();drawSpark()});
 attachTips();
 setRange(range);

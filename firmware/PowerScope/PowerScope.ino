@@ -32,8 +32,17 @@
       GET  /history?r=SEC    trend arrays for 60, 600, 3600 or 21600 s
       GET  /scope            two mains cycles of voltage and current
       POST /rate?x=7.5       tariff rate in rupees per kWh (saved in flash)
-      POST /reset            zero the energy counter
-      POST /zero             re-measure the idle current noise (load unplugged)
+      GET  /cal              calibration values, their defaults and the state of the last zeroing
+      POST /unlock?pin=      check the PIN (the page asks for it before showing calibration)
+      POST /cal?pin=&...     change calibration: vref= (multimeter volts), iref= (clamp meter amps),
+                             vgain=, itrim=, shift=, isign=, or defaults=1
+      POST /zero?pin=        re-measure the idle current noise (load unplugged)
+      POST /pin?pin=&new=    change the 4-digit PIN (default 1234)
+
+  CALIBRATION
+      V_GAIN, I_TRIM, SHIFT, I_SIGN and I_NOISE live in flash and are set from the Calibrate section of the
+      page. The values below are only the defaults (used on a fresh board and by "Restore defaults").
+      Five wrong PINs in a row lock calibration for 60 s.
 
   IDLE NOISE
       The current sensor shows about 0.19 A rms of random noise even with no load. It adds to a real
@@ -51,7 +60,7 @@
 #include <U8g2lib.h>
 #include "web_index.h"
 
-#define FW_VERSION "1.1.0"
+#define FW_VERSION "1.2.0"
 
 // ======================= CONFIG =======================================
 const char *WIFI_SSID = "PowerScope";
@@ -61,17 +70,25 @@ const char *WIFI_PASS = "powerscope";   // WPA2: at least 8 characters
 //   U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
-// calibration
-float V_GAIN = 0.946f;              // volts per mV at the pin
-float I_TRIM = 1.00f;               // clamp meter A / displayed A
+// calibration defaults (the live values are in flash, set from the Calibrate section of the page)
+const float V_GAIN_DEF  = 0.946f;   // volts per mV at the pin
+const float I_TRIM_DEF  = 1.00f;    // clamp meter A / displayed A
+const int   SHIFT_DEF   = 0;        // phase alignment in samples (1 sample = 2.25 deg)
+const int   I_SIGN_DEF  = -1;       // -1 because real power read negative on a plain load
+const float I_NOISE_DEF = 0.195f;   // idle noise in A rms, measured from your idle log (0.194 quiet, 0.228 in bursts)
+const char *PIN_DEF     = "1234";
 const float DIV = 2.0f / 3.0f;      // 10k + 20k divider
 const float SENS_MV_PER_A = 100;    // ACS712-20A
-int   SHIFT  = 0;                   // phase alignment in samples (1 sample = 2.25 deg)
-int   I_SIGN = -1;                  // -1 because real power read negative on a plain load
 const float I_FLOOR = 0.08f;        // below this the current shows as zero
 const float V_FLOOR = 20.0f;
-float I_NOISE = 0.195f;             // idle noise in A rms, measured from your idle log (0.194 quiet, 0.228 in bursts)
 const float GATE_FACTOR = 1.35f;    // readings below I_NOISE x this are "no load"
+const int   SHIFT_MAX = 20;         // +-45 degrees
+
+float V_GAIN  = V_GAIN_DEF;
+float I_TRIM  = I_TRIM_DEF;
+int   SHIFT   = SHIFT_DEF;
+int   I_SIGN  = I_SIGN_DEF;
+float I_NOISE = I_NOISE_DEF;
 
 // pins and sampling
 const int      PIN_V = 34;
@@ -94,13 +111,22 @@ struct Meas { float V, I, P, Q, S, PF, f, phi, cf; };
 Meas M = {};
 float g_rawI = 0, g_rawV = 0, g_rawPF = 0;     // before the noise correction (used when zeroing)
 volatile bool zeroRequest = false;
+volatile int  zeroState = 0;                   // 0 never run, 1 running, 2 done, 3 refused
+const char   *zeroMsg = "";
+
+// ---------------- calibration changes from the page (applied in loop) ----------------
+struct Cal { float vgain, itrim, inoise; int shift, isign; };
+Cal           calNext;
+volatile bool calPending = false;
+char          pinCode[5] = "1234";
+int           pinFails = 0;
+uint32_t      pinLockUntil = 0;
 
 // ---------------- energy (kept in flash) ----------------
 double   kWh = 0, onSeconds = 0;
 float    maxP = 0;
 float    rateRs = 7.0f;
 uint32_t lastMs = 0, lastSave = 0;
-volatile bool resetPending = false;
 bool     dirty = false;
 
 // ---------------- history rings (for the web page) ----------------
@@ -269,17 +295,93 @@ bool calibrateZero() {
   for (int w = 0; w < 40 && ok < 20; w++) {
     if (measure()) { sumI += g_rawI; sumPF += g_rawPF; sumV += g_rawV; ok++; }
   }
-  if (ok < 15) { Serial.println("[zero] too few clean windows, try again"); return false; }
+  zeroState = 3;
+  if (ok < 15) { zeroMsg = "Too few clean readings. Try again."; Serial.println("[zero] too few clean windows, try again"); return false; }
   float mi = sumI / ok, mpf = sumPF / ok, mv = sumV / ok;
-  if (mv < 100) { Serial.println("[zero] no mains voltage seen, nothing changed"); return false; }
+  if (mv < 100) { zeroMsg = "No mains voltage seen. Nothing changed."; Serial.println("[zero] no mains voltage seen, nothing changed"); return false; }
   if (mi > 0.30f || mpf > 0.35f) {
+    zeroMsg = "A load seems to be connected. Unplug it and try again.";
     Serial.printf("[zero] a load seems to be connected (I %.3f A, PF %.2f), nothing changed\n", mi, mpf);
     return false;
   }
   I_NOISE = mi;
   prefs.putFloat("inoise", mi);
+  zeroState = 2;
+  zeroMsg = "Done. Idle noise saved.";
   Serial.printf("[zero] idle noise set to %.3f A rms (gate %.3f A), saved\n", mi, max(I_FLOOR, mi * GATE_FACTOR));
   return true;
+}
+
+// ---------------- calibration ----------------
+Cal liveCal() { return Cal{ V_GAIN, I_TRIM, I_NOISE, SHIFT, I_SIGN }; }
+Cal defaultCal() { return Cal{ V_GAIN_DEF, I_TRIM_DEF, I_NOISE_DEF, SHIFT_DEF, I_SIGN_DEF }; }
+
+// Checks a PIN typed on the page. Returns nullptr if it is right, otherwise the message to show.
+const char *pinCheck(const char *given) {
+  if (pinLockUntil) {
+    if ((int32_t)(millis() - pinLockUntil) < 0) return "Too many wrong tries. Wait a minute.";
+    pinLockUntil = 0;
+  }
+  if (given && strcmp(given, pinCode) == 0) { pinFails = 0; return nullptr; }
+  if (++pinFails >= 5) { pinFails = 0; pinLockUntil = (millis() + 60000UL) | 1; return "Too many wrong tries. Wait a minute."; }
+  return "Wrong PIN";
+}
+
+bool validPin(const char *s) {
+  if (!s || strlen(s) != 4) return false;
+  for (int k = 0; k < 4; k++) if (s[k] < '0' || s[k] > '9') return false;
+  return true;
+}
+
+// The calibration requests from the page. Each takes the live values in c, changes them and returns
+// nullptr, or returns the message to show and leaves c alone.
+const char *calVoltRef(Cal &c, float meterV) {
+  if (M.V < 100) return "No mains voltage seen";
+  if (!(meterV >= 150 && meterV <= 300)) return "Enter the multimeter reading in volts, such as 231";
+  float g = c.vgain * meterV / M.V;
+  if (!(g >= 0.5f && g <= 2.0f)) return "That is too far from the reading. Check the meter and the wiring.";
+  c.vgain = g;
+  return nullptr;
+}
+const char *calCurrentRef(Cal &c, float meterA) {
+  if (M.I < 0.5f) return "Connect a kettle, iron or heater first (at least 0.5 A)";
+  if (!(meterA >= 0.1f && meterA <= 10)) return "Enter the clamp meter reading in amps, such as 4.2";
+  float k = meterA / M.I;
+  if (!(c.itrim * k >= 0.5f && c.itrim * k <= 2.0f)) return "That is too far from the reading. Check the meter and the wiring.";
+  c.itrim *= k;
+  c.inoise *= k;   // the noise was measured in amps with the old trim
+  return nullptr;
+}
+const char *calVoltGain(Cal &c, float g) {
+  if (!(g >= 0.5f && g <= 2.0f)) return "The voltage gain must be between 0.5 and 2.0";
+  c.vgain = g;
+  return nullptr;
+}
+const char *calCurrentTrim(Cal &c, float t) {
+  if (!(t >= 0.5f && t <= 2.0f)) return "The current trim must be between 0.5 and 2.0";
+  c.inoise *= t / c.itrim;
+  c.itrim = t;
+  return nullptr;
+}
+const char *calShift(Cal &c, int sh) {
+  if (sh < -SHIFT_MAX || sh > SHIFT_MAX) return "The phase shift must be between -20 and 20";
+  c.shift = sh;
+  return nullptr;
+}
+const char *calSign(Cal &c, int sg) {
+  if (sg != 1 && sg != -1) return "The current direction must be 1 or -1";
+  c.isign = sg;
+  return nullptr;
+}
+
+void applyCal(const Cal &c) {
+  V_GAIN = c.vgain; I_TRIM = c.itrim; I_NOISE = c.inoise; SHIFT = c.shift; I_SIGN = c.isign;
+  prefs.putFloat("vgain", V_GAIN);
+  prefs.putFloat("itrim", I_TRIM);
+  prefs.putFloat("inoise", I_NOISE);
+  prefs.putInt("shift", SHIFT);
+  prefs.putInt("isign", I_SIGN);
+  Serial.printf("[cal] V_GAIN %.4f  I_TRIM %.4f  I_NOISE %.3f  SHIFT %d  I_SIGN %d, saved\n", V_GAIN, I_TRIM, I_NOISE, SHIFT, I_SIGN);
 }
 
 void saveEnergy() {
@@ -291,11 +393,6 @@ void saveEnergy() {
 
 void updateStats() {
   uint32_t now = millis();
-  if (resetPending) {
-    resetPending = false;
-    kWh = 0; onSeconds = 0; maxP = 0;
-    saveEnergy();
-  }
   if (lastMs) {
     float dt = (now - lastMs) / 1000.0f;
     if (M.P > 0) { kWh += (double)M.P * dt / 3.6e6; dirty = true; }
@@ -445,6 +542,22 @@ void pageConnect() {
 static void sendOk(AsyncWebServerRequest *req) {
   req->send(200, "application/json", "{\"ok\":1}");
 }
+static void sendErr(AsyncWebServerRequest *req, const char *msg) {
+  char b[160];
+  snprintf(b, sizeof(b), "{\"ok\":0,\"err\":\"%s\"}", msg);
+  req->send(200, "application/json", b);
+}
+static const char *reqPin(AsyncWebServerRequest *req) {
+  return pinCheck(req->hasParam("pin") ? req->getParam("pin")->value().c_str() : "");
+}
+static int calJson(char *b, size_t n, const char *head, const Cal &c) {
+  Cal d = defaultCal();
+  return snprintf(b, n,
+                  "{%s\"vgain\":%.4f,\"itrim\":%.4f,\"inoise\":%.3f,\"shift\":%d,\"isign\":%d,\"zero\":%d,\"zmsg\":\"%s\","
+                  "\"def\":{\"vgain\":%.4f,\"itrim\":%.4f,\"inoise\":%.3f,\"shift\":%d,\"isign\":%d}}",
+                  head, c.vgain, c.itrim, c.inoise, c.shift, c.isign, (int)zeroState, zeroMsg,
+                  d.vgain, d.itrim, d.inoise, d.shift, d.isign);
+}
 
 void dnsTask(void *) {
   for (;;) {
@@ -558,13 +671,56 @@ void setupWeb() {
     sendOk(req);
   });
 
+  server.on("/cal", HTTP_GET, [](AsyncWebServerRequest *req) {
+    char b[400];
+    calJson(b, sizeof(b), "", calPending ? calNext : liveCal());
+    AsyncWebServerResponse *r = req->beginResponse(200, "application/json", b);
+    r->addHeader("Cache-Control", "no-store");
+    req->send(r);
+  });
+
+  server.on("/unlock", HTTP_POST, [](AsyncWebServerRequest *req) {
+    const char *e = reqPin(req);
+    if (e) sendErr(req, e); else sendOk(req);
+  });
+
+  server.on("/cal", HTTP_POST, [](AsyncWebServerRequest *req) {
+    const char *e = reqPin(req);
+    if (e) { sendErr(req, e); return; }
+    Cal c = liveCal();
+    auto num = [&](const char *k) { return req->getParam(k)->value().toFloat(); };
+    if (req->hasParam("defaults")) c = defaultCal();
+    else if (req->hasParam("vref"))  e = calVoltRef(c, num("vref"));
+    else if (req->hasParam("iref"))  e = calCurrentRef(c, num("iref"));
+    else if (req->hasParam("vgain")) e = calVoltGain(c, num("vgain"));
+    else if (req->hasParam("itrim")) e = calCurrentTrim(c, num("itrim"));
+    else if (req->hasParam("shift")) e = calShift(c, req->getParam("shift")->value().toInt());
+    else if (req->hasParam("isign")) e = calSign(c, req->getParam("isign")->value().toInt());
+    else e = "Nothing to change";
+    if (e) { sendErr(req, e); return; }
+    calNext = c;
+    calPending = true;   // applied in loop(), between two measuring windows
+    char b[400];
+    calJson(b, sizeof(b), "\"ok\":1,", c);
+    req->send(200, "application/json", b);
+  });
+
   server.on("/zero", HTTP_POST, [](AsyncWebServerRequest *req) {
+    const char *e = reqPin(req);
+    if (e) { sendErr(req, e); return; }
+    zeroState = 1;
+    zeroMsg = "Measuring, keep the load unplugged...";
     zeroRequest = true;   // done in loop(), because it needs the sampling loop for a few seconds
     sendOk(req);
   });
 
-  server.on("/reset", HTTP_POST, [](AsyncWebServerRequest *req) {
-    resetPending = true;   // done in loop() so it cannot clash with the energy update
+  server.on("/pin", HTTP_POST, [](AsyncWebServerRequest *req) {
+    const char *e = reqPin(req);
+    if (e) { sendErr(req, e); return; }
+    String nw = req->hasParam("new") ? req->getParam("new")->value() : String();
+    if (!validPin(nw.c_str())) { sendErr(req, "The new PIN must be 4 digits"); return; }
+    strcpy(pinCode, nw.c_str());
+    prefs.putString("pin", pinCode);
     sendOk(req);
   });
 
@@ -612,19 +768,32 @@ void setup() {
   onSeconds = prefs.getFloat("on", 0);
   maxP = prefs.getFloat("max", 0);
   rateRs = prefs.getFloat("rate", 7.0f);
-  I_NOISE = prefs.getFloat("inoise", 0.195f);
+  V_GAIN = prefs.getFloat("vgain", V_GAIN_DEF);
+  I_TRIM = prefs.getFloat("itrim", I_TRIM_DEF);
+  I_NOISE = prefs.getFloat("inoise", I_NOISE_DEF);
+  SHIFT = constrain((int)prefs.getInt("shift", SHIFT_DEF), -SHIFT_MAX, SHIFT_MAX);
+  I_SIGN = prefs.getInt("isign", I_SIGN_DEF) < 0 ? -1 : 1;
+  String pin = prefs.getString("pin", PIN_DEF);
+  strcpy(pinCode, validPin(pin.c_str()) ? pin.c_str() : PIN_DEF);
+  Serial.printf("[cal] V_GAIN %.4f  I_TRIM %.4f  I_NOISE %.3f  SHIFT %d  I_SIGN %d\n", V_GAIN, I_TRIM, I_NOISE, SHIFT, I_SIGN);
 
   setupWeb();
   splash("see where every watt goes");
   delay(1200);
 }
 
-void loop() {
+// Work asked for by the page or the Serial Monitor, done here between two measuring windows.
+void handleRequests() {
   while (Serial.available()) {
     char c = Serial.read();
     if (c == 'z' || c == 'Z') zeroRequest = true;
   }
-  if (zeroRequest) { zeroRequest = false; calibrateZero(); lastMs = millis(); }
+  if (zeroRequest) { zeroRequest = false; zeroState = 1; calibrateZero(); lastMs = millis(); }
+  if (calPending) { Cal c = calNext; calPending = false; applyCal(c); }
+}
+
+void loop() {
+  handleRequests();
 
   measure();       // a skipped window simply keeps the last good values
   updateStats();
