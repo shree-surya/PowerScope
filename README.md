@@ -44,6 +44,10 @@ Open the **Calibrate** section of the page and enter the PIN (**1234** until you
 
 Everything is saved in the ESP32's flash and kept after a power cut.
 
+## Energy history
+
+The **Energy** section shows today, this month, a month-end bill estimate, a 30-day chart and a 12-month chart, with a CSV download. The ESP32 has no clock of its own, so it takes the time from your phone when you open the page. After a power cut, energy is held aside until a phone opens the page, then added to that day. Days and months are kept in flash (62 days, 12 months), saved every 10 minutes.
+
 ## Check the maths without hardware
 
 ```

@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stdlib.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -29,6 +30,10 @@ inline int analogReadMilliVolts(int pin){
   return (int)(1650-IPK_MV*sin(w-PHI)+n+0.5);
 } inline void delay(int){}
 typedef void* TaskHandle_t;
+typedef int portMUX_TYPE;
+#define portMUX_INITIALIZER_UNLOCKED 0
+#define portENTER_CRITICAL(m) ((void)(m))
+#define portEXIT_CRITICAL(m) ((void)(m))
 #define pdMS_TO_TICKS(x) (x)
 inline void vTaskDelay(int){}
 inline int xTaskCreatePinnedToCore(void(*)(void*),const char*,int,void*,int,TaskHandle_t*,int){return 1;}

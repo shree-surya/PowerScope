@@ -200,21 +200,25 @@ footer{margin-top:34px;padding:22px 0 34px;border-top:1px solid var(--line);colo
 </section>
 
 <section id="energy">
-  <div class="head"><h2>Energy and cost</h2><p>Since the device was first switched on</p></div>
+  <div class="head"><h2>Energy and cost</h2><p id="eclock">Days and months follow your phone's clock</p></div>
   <div class="energy">
-    <div class="card p"><div class="lab">Energy used</div><div class="val"><span id="kwh">--</span><small>kWh</small></div><div class="sub" id="kvah">&nbsp;</div></div>
-    <div class="card"><div class="lab">Cost so far</div><div class="val"><small>₹</small><span id="cost">--</span></div><div class="sub" id="ratesub">&nbsp;</div></div>
-    <div class="card"><div class="lab">Load on for</div><div class="val" style="font-size:28px"><span id="on">--</span></div><div class="sub" id="up">&nbsp;</div></div>
-    <div class="card"><div class="lab">Average power</div><div class="val"><span id="avg">--</span><small>W</small></div><div class="sub">while the load was on</div></div>
-    <div class="card"><div class="lab">Highest power</div><div class="val"><span id="max">--</span><small>W</small></div><div class="sub">highest seen so far</div></div>
+    <div class="card p"><div class="lab">Today</div><div class="val"><span id="etd">--</span><small>kWh</small></div><div class="sub" id="etdc">&nbsp;</div></div>
+    <div class="card p"><div class="lab">This month</div><div class="val"><span id="emo">--</span><small>kWh</small></div><div class="sub" id="emoc">&nbsp;</div></div>
+    <div class="card"><div class="lab">Month-end estimate</div><div class="val"><small>₹</small><span id="eproj">--</span></div><div class="sub" id="eprojs">&nbsp;</div></div>
+    <div class="card"><div class="lab">Total measured</div><div class="val"><span id="kwh">--</span><small>kWh</small></div><div class="sub" id="ratesub">&nbsp;</div></div>
+    <div class="card"><div class="lab">Load on for</div><div class="val" style="font-size:28px"><span id="on">--</span></div><div class="sub" id="onsub">&nbsp;</div></div>
   </div>
+  <div class="card chart"><div class="top2"><b>Last 30 days, kWh</b><span class="st" id="st-d"></span></div>
+    <div class="box"><canvas id="c-d" aria-label="Energy per day for the last 30 days"></canvas><div class="tip"></div></div></div>
+  <div class="card chart"><div class="top2"><b>Last 12 months, kWh</b><span class="st" id="st-m"></span></div>
+    <div class="box"><canvas id="c-m" aria-label="Energy per month for the last 12 months"></canvas><div class="tip"></div></div></div>
   <div class="ctl">
     <div class="card"><div class="lab">Tariff rate, ₹ per kWh</div>
       <div class="field"><input id="rate" type="number" inputmode="decimal" min="0" step="0.1" aria-label="Rate in rupees per kWh"><button class="btn primary" id="saveRate">Save</button></div>
-      <div class="note" id="rnote"></div></div>
-    <div class="card"><div class="lab">Data</div>
-      <div class="actions"><button class="btn" id="csv">Download CSV</button></div>
-      <div class="note" id="dnote">The CSV holds the trend range selected above.</div></div>
+      <div class="note" id="rnote">One flat rate is used for every day and month.</div></div>
+    <div class="card"><div class="lab">Download</div>
+      <div class="actions"><button class="btn" id="ecsv">Daily and monthly CSV</button><button class="btn" id="csv">Trend CSV</button></div>
+      <div class="note" id="dnote">The trend CSV holds the range selected under Trends.</div></div>
   </div>
 </section>
 
@@ -311,7 +315,8 @@ function demoData(){
   if(dm.last){const dt=t-dm.last;dm.kwh+=d.p*dt/3.6e6;if(d.i>0){dm.on+=dt;dm.sumP+=d.p*dt}}
   dm.last=t;dm.max=Math.max(dm.max,d.p);
   return {v:d.v,i:d.i,p:d.p,q:q,s:d.s,pf:d.pf,phi:d.pf?Math.acos(d.pf)*180/Math.PI:0,f:50+.05*nz(t,3),
-    cf:d.i?(d.pf<.9?1.46:1.41)+.01*nz(t,4):0,kwh:dm.kwh,on:dm.on,avg:dm.on>1?dm.sumP/dm.on:0,max:dm.max,up:3600+t%1000,rate:demoRate};
+    cf:d.i?(d.pf<.9?1.46:1.41)+.01*nz(t,4):0,kwh:dm.kwh,on:dm.on,avg:dm.on>1?dm.sumP/dm.on:0,max:dm.max,up:3600+t%1000,rate:demoRate,
+    clk:1,td:dm.kwh-.62,mo:dm.kwh-.62+9.37};
 }
 function simHistory(r){
   const dt=r<=600?1:(r===3600?5:30), n=Math.round(r/dt), now=Date.now()/1000, v=[],i=[],p=[];
@@ -457,17 +462,16 @@ function render(){
   const pb=$("#pfbar");pb.style.width=(d.pf*100)+"%";pb.className="bar-fill"+(d.pf<.85?" warn":"");
   set("cfsub",d.cf>0?(d.cf<1.5?"Smooth, sine-like load":"Chopped current, like a charger or LED driver"):"Needs a load");
   set("tp",fp(d.p));set("tq",fp(d.q));set("ts",fp(d.s));set("tphi",fx(d.phi,1));
-  set("kwh",fx(d.kwh,4)); set("kvah",fx(d.kwh*1000,0)+" Wh");
-  set("cost",fx(d.kwh*d.rate,2)); set("ratesub","at ₹"+fx(d.rate,2)+" per kWh");
-  set("on",hms(d.on)); set("up","device up for "+hms(d.up));
-  set("avg",fp(d.avg)); set("max",fp(d.max));
+  set("kwh",fx(d.kwh,3)); set("ratesub","₹"+fx(d.kwh*d.rate,2)+" at ₹"+fx(d.rate,2)+" per kWh");
+  set("on",hms(d.on)); set("onsub","average "+fp(d.avg)+" W, peak "+fp(d.max)+" W");
+  renderEnergy();
   const ri=$("#rate"); if(document.activeElement!==ri)ri.value=fx(d.rate,2);
   live.push(d.p); if(live.length>60)live.shift();
   drawTri(); drawSpark(); renderCal();
 }
 async function tick(){
   if(!demo){
-    try{ S=await getJSON("/data"); fails=0; everLive=true; setStatus("Live"); }
+    try{ S=await getJSON("/data"); fails=0; everLive=true; setStatus("Live"); if(!S.clk)syncClock(); }
     catch(e){
       fails++;
       if(!everLive&&fails>=2){demo=true;$("#demo").hidden=false}
@@ -508,8 +512,124 @@ async function saveRate(){
   if(!(x>=0&&x<1000)){set("rnote","Enter a rate such as 7.50");return}
   try{
     if(demo)demoRate=x; else await getJSON("/rate?x="+x,{method:"POST"});
-    set("rnote","Saved ₹"+fx(x,2)+" per kWh");
+    set("rnote","Saved ₹"+fx(x,2)+" per kWh"); if(S)S.rate=x; drawEnergy(); renderEnergy();
   }catch(e){set("rnote","Could not reach the device")}
+}
+
+/* ---------------- energy history ---------------- */
+/* The device has no clock of its own: the phone's time is sent whenever the device says it has none
+   (after every power-up). Days and months come back as day numbers in the phone's time zone. */
+let E=null, Eat=0, lastSync=0, eTimer=0;
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const WD=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const dayDate=n=>new Date(n*86400000);   /* read it with the UTC getters */
+const monthName=k=>MON[k%12]+" "+Math.floor(k/12);
+const dayName=n=>{const d=dayDate(n);return WD[d.getUTCDay()]+" "+d.getUTCDate()+" "+MON[d.getUTCMonth()]};
+const daysIn=(y,m)=>new Date(Date.UTC(y,m+1,0)).getUTCDate();
+async function syncClock(){
+  if(demo||Date.now()-lastSync<10000)return;
+  lastSync=Date.now();
+  try{
+    await getJSON("/time?epoch="+Math.floor(Date.now()/1000)+"&tz="+(-new Date().getTimezoneOffset()),{method:"POST"});
+    clearTimeout(eTimer); eTimer=setTimeout(loadEnergy,1500);
+  }catch(e){}
+}
+function demoEnergy(){
+  const tz=-new Date().getTimezoneOffset(), now=Math.floor(Date.now()/1000)+tz*60, day=Math.floor(now/86400);
+  const d=dayDate(day), mk=d.getUTCFullYear()*12+d.getUTCMonth(), days=[], months=[];
+  for(let k=0;k<62;k++){const n=day-61+k;days.push(k<9?null:+(2.1+1.2*Math.abs(nz(n,5))*2+.4*Math.sin(n/3)).toFixed(4))}
+  days[61]=+(S?S.td||0:1).toFixed(4);
+  for(let k=0;k<12;k++){const q=mk-11+k;months.push(k<3?null:+(70+25*Math.sin(q/2)+8*nz(q,6)).toFixed(3))}
+  months[11]=+(S?S.mo||0:40).toFixed(3);
+  return {set:1,now:now,day:day,month:mk,pre:0,rate:S?S.rate:7,days:days,months:months};
+}
+async function loadEnergy(){
+  try{ E=demo?demoEnergy():await getJSON("/energy"); Eat=Date.now(); drawEnergy(); renderEnergy(); }catch(e){}
+  clearTimeout(eTimer); eTimer=setTimeout(loadEnergy,E?60000:3000);
+}
+/* the cards follow /data every second; the charts follow /energy every minute */
+function renderEnergy(){
+  if(!S)return;
+  const rate=S.rate||0;
+  if(!S.clk&&!demo){
+    ["etd","emo","eproj"].forEach(id=>set(id,"--"));
+    set("etdc","Waiting for the time from this phone"); set("emoc",""); set("eprojs","");
+    set("eclock","The device clock is not set yet");
+    return;
+  }
+  set("eclock","Days and months follow your phone's clock");
+  set("etd",fx(S.td,3)); set("etdc","₹"+fx(S.td*rate,2));
+  set("emo",fx(S.mo,2));
+  if(!E||!E.set){set("emoc","₹"+fx(S.mo*rate,2));return}
+  const now=E.now+(Date.now()-Eat)/1000, day=Math.floor(now/86400), dd=dayDate(day);
+  const first=day-dd.getUTCDate()+1, dim=daysIn(dd.getUTCFullYear(),dd.getUTCMonth());
+  set("emoc","₹"+fx(S.mo*rate,2)+" since 1 "+MON[dd.getUTCMonth()]);
+  /* projection: this month's total so far, plus the average rate since data began this month, to the month end */
+  let start=first;
+  for(let k=0;k<62;k++){const n=E.day-61+k;if(n>=first&&E.days[k]!=null){start=n;break}}
+  const elapsed=now/86400-start, left=first+dim-now/86400;
+  if(elapsed<.25){set("eproj","--");set("eprojs","Shown after 6 hours of data this month");return}
+  const pk=S.mo+S.mo/elapsed*left;
+  set("eproj",fx(pk*rate,0)); set("eprojs","about "+fx(pk,1)+" kWh by "+dim+" "+MON[dd.getUTCMonth()]+", at the pace so far");
+}
+/* bar chart: one series, zero baseline, gaps between bars, rounded tops, a tooltip per bar */
+function drawBars(cv,vals,labels,tips,showLabel){
+  const c=prep(cv); if(!c)return;
+  const g=c.g,w=c.w,h=c.h,L=40,R=6,T=10,B=22,pw=w-L-R,ph=h-T-B,n=vals.length;
+  let mx=0; vals.forEach(v=>{if(v!=null&&v>mx)mx=v});
+  const step=mx<=0?1:Math.pow(10,Math.floor(Math.log10(mx/3))), nice=[1,1.5,2,2.5,3,4,5,10].map(m=>m*step).find(s=>s*3>=mx)||step*10, top=nice*3;
+  g.strokeStyle=C.line;g.fillStyle=C.muted;g.lineWidth=1;g.textAlign="right";g.textBaseline="middle";
+  for(let k=0;k<=3;k++){const y=Math.round(T+ph*(1-k/3))+.5;g.beginPath();g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();g.fillText(fx(nice*k,nice<1?1:0),L-6,y)}
+  const slot=pw/n, bw=Math.max(2,slot-2), rad=Math.min(4,bw/2);
+  g.textAlign="center";g.textBaseline="alphabetic";
+  vals.forEach((v,k)=>{
+    const x=L+slot*k+(slot-bw)/2;
+    if(showLabel(k)){g.fillStyle=C.muted;g.fillText(labels[k],x+bw/2,h-5)}
+    if(v==null||v<=0)return;
+    const bh=Math.max(1,ph*v/top), y=T+ph-bh, r=Math.min(rad,bh);
+    g.beginPath();g.moveTo(x,T+ph);g.lineTo(x,y+r);g.arcTo(x,y,x+r,y,r);g.lineTo(x+bw-r,y);g.arcTo(x+bw,y,x+bw,y+r,r);g.lineTo(x+bw,T+ph);g.closePath();
+    g.fillStyle=C.pow;g.fill();
+  });
+  cv._b={L:L,slot:slot,n:n,w:w,tips:tips};
+}
+function drawEnergy(){
+  if(!E)return;
+  const rate=(S&&S.rate!=null?S.rate:E.rate)||0, dv=E.days.slice(-30), dn=dv.map((_,k)=>E.day-29+k);
+  const dTips=dv.map((v,k)=>dayName(dn[k])+(k===29?" (today)":"")+" · "+(v==null?"no data":fx(v,3)+" kWh · ₹"+fx(v*rate,2)));
+  drawBars($("#c-d"),dv,dn.map(n=>String(dayDate(n).getUTCDate())),dTips,k=>(29-k)%5===0);
+  const mk=E.months.map((_,k)=>E.month-11+k);
+  const mTips=E.months.map((v,k)=>monthName(mk[k])+(k===11?" (so far)":"")+" · "+(v==null?"no data":fx(v,1)+" kWh · ₹"+fx(v*rate,0)));
+  drawBars($("#c-m"),E.months,mk.map(q=>MON[q%12].slice(0,1)+(q%12===0?"'"+String(Math.floor(q/12)).slice(2):"")),mTips,()=>true);
+  const sum=a=>a.reduce((s,v)=>s+(v||0),0), cnt=a=>a.filter(v=>v!=null).length;
+  set("st-d",cnt(dv)?"total "+fx(sum(dv),1)+" kWh · ₹"+fx(sum(dv)*rate,0)+" · "+cnt(dv)+" days with data":"No data yet");
+  set("st-m",cnt(E.months)?"total "+fx(sum(E.months),0)+" kWh · ₹"+fx(sum(E.months)*rate,0):"No data yet");
+}
+function attachBarTips(){
+  ["c-d","c-m"].forEach(id=>{
+    const cv=document.getElementById(id), tip=cv.parentElement.querySelector(".tip");
+    const move=e=>{
+      const b=cv._b; if(!b)return;
+      const r=cv.getBoundingClientRect(), k=Math.floor((e.clientX-r.left-b.L)/b.slot);
+      if(k<0||k>=b.n){tip.style.display="none";return}
+      tip.textContent=b.tips[k];
+      tip.style.left=Math.min(Math.max(b.L+b.slot*(k+.5),90),b.w-90)+"px";tip.style.display="block";
+    };
+    cv.addEventListener("pointermove",move);cv.addEventListener("pointerdown",move);
+    cv.addEventListener("pointerleave",()=>{tip.style.display="none"});
+  });
+}
+function energyCsv(){
+  if(!E){set("dnote","Energy history is not loaded yet.");return}
+  const rate=(S&&S.rate!=null?S.rate:E.rate)||0, rows=["period,start,kWh,cost_Rs"];
+  const iso=n=>{const d=dayDate(n);return d.getUTCFullYear()+"-"+pad(d.getUTCMonth()+1)+"-"+pad(d.getUTCDate())};
+  E.days.forEach((v,k)=>{if(v!=null)rows.push("day,"+iso(E.day-61+k)+","+fx(v,4)+","+fx(v*rate,2))});
+  E.months.forEach((v,k)=>{const q=E.month-11+k;if(v!=null)rows.push("month,"+Math.floor(q/12)+"-"+pad(q%12+1)+","+fx(v,3)+","+fx(v*rate,2))});
+  if(rows.length<2){set("dnote","No energy history yet.");return}
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([rows.join("\n")],{type:"text/csv"}));
+  a.download="powerscope_energy.csv";
+  document.body.appendChild(a);a.click();a.remove();
+  set("dnote","Saved "+(rows.length-1)+" rows, at ₹"+fx(rate,2)+" per kWh.");
 }
 
 /* ---------------- calibrate ---------------- */
@@ -612,6 +732,7 @@ async function restoreDefaults(){
 $$("#chips .chip").forEach(b=>b.addEventListener("click",()=>setRange(+b.dataset.r)));
 $("#pause").addEventListener("click",e=>{paused=!paused;e.target.textContent=paused?"Resume":"Pause"});
 $("#csv").addEventListener("click",csv);
+$("#ecsv").addEventListener("click",energyCsv);
 $("#saveRate").addEventListener("click",saveRate);
 $("#unlock").addEventListener("click",unlock);
 $("#pinIn").addEventListener("keydown",e=>{if(e.key==="Enter")unlock()});
@@ -622,8 +743,10 @@ $("#zero").addEventListener("click",zero);
 $("#pinSave").addEventListener("click",changePin);
 $("#defaults").addEventListener("click",restoreDefaults);
 $("#lock").addEventListener("click",lock);
-window.addEventListener("resize",()=>{drawCharts();drawScope();drawSpark()});
+window.addEventListener("resize",()=>{drawCharts();drawScope();drawSpark();drawEnergy()});
 attachTips();
+attachBarTips();
+loadEnergy();
 setRange(range);
 tick();
 loadScope();

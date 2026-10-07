@@ -38,6 +38,14 @@
                              vgain=, itrim=, shift=, isign=, or defaults=1
       POST /zero?pin=        re-measure the idle current noise (load unplugged)
       POST /pin?pin=&new=    change the 4-digit PIN (default 1234)
+      POST /time?epoch=&tz=  the phone's clock (UTC seconds, minutes east of UTC); the page sends it on open
+      GET  /energy           kWh per day for 62 days and per month for 12 months (JSON)
+
+  ENERGY HISTORY
+      The ESP32 has no battery clock, so the page sends the phone's time each time it opens. Until then
+      (after every power-up) energy is held aside and added to "today" when the time arrives.
+      Days and months are calendar days and months in the phone's time zone. They are kept in flash with
+      the energy total, at most every 10 minutes.
 
   CALIBRATION
       V_GAIN, I_TRIM, SHIFT, I_SIGN and I_NOISE live in flash and are set from the Calibrate section of the
@@ -60,7 +68,7 @@
 #include <U8g2lib.h>
 #include "web_index.h"
 
-#define FW_VERSION "1.2.0"
+#define FW_VERSION "1.3.0"
 
 // ======================= CONFIG =======================================
 const char *WIFI_SSID = "PowerScope";
@@ -128,6 +136,97 @@ float    maxP = 0;
 float    rateRs = 7.0f;
 uint32_t lastMs = 0, lastSave = 0;
 bool     dirty = false;
+
+// ---------------- clock (from the phone) and energy history (kept in flash) ----------------
+const int DAYS = 62, MONTHS = 12;
+const uint32_t EPOCH_MIN = 1704067200UL;   // 2024-01-01: a phone clock before this is wrong
+struct EnergyHist {
+  uint16_t dayTag[DAYS];      // day number (days since 1970-01-01, local time) held in each slot
+  uint16_t monTag[MONTHS];    // year * 12 + month (0-11)
+  double   dayKwh[DAYS];
+  double   monKwh[MONTHS];
+};
+EnergyHist hist = {};
+portMUX_TYPE histMux = portMUX_INITIALIZER_UNLOCKED;   // the web task copies hist while loop() adds to it
+double   preKwh = 0;              // used while the clock was not set
+bool     clockSet = false;
+uint32_t clockLocal = 0;          // local time in seconds since 1970, valid when clockSet
+uint64_t clockAtMs = 0;           // uptimeMs() when clockLocal was taken
+int      tzMin = 0;
+volatile uint32_t g_localNow = 0; // local seconds, updated in loop() for the web task (0 = not set)
+volatile float g_todayKwh = 0, g_monthKwh = 0;
+volatile bool  timePending = false;
+volatile uint32_t timeEpoch = 0;
+volatile int   timeTz = 0;
+
+// millis() wraps after 49 days; this does not (it is only called from loop()).
+uint64_t uptimeMs() {
+  static uint32_t last = 0;
+  static uint64_t acc = 0;
+  uint32_t m = millis();
+  acc += (uint32_t)(m - last);
+  last = m;
+  return acc;
+}
+
+// Calendar date from a day number (days since 1970-01-01), after Howard Hinnant's civil_from_days.
+void civilFromDays(int32_t z, int &y, int &m, int &d) {
+  z += 719468;
+  int32_t era = (z >= 0 ? z : z - 146096) / 146097;
+  uint32_t doe = (uint32_t)(z - era * 146097);
+  uint32_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  uint32_t mp = (5 * doy + 2) / 153;
+  d = (int)(doy - (153 * mp + 2) / 5 + 1);
+  m = (int)(mp < 10 ? mp + 3 : mp - 9);
+  y = (int)(yoe + era * 400 + (m <= 2));
+}
+uint16_t monthKey(uint16_t day) { int y, m, d; civilFromDays(day, y, m, d); return (uint16_t)(y * 12 + m - 1); }
+
+void histAdd(uint16_t day, double e) {
+  uint16_t mk = monthKey(day);
+  int di = day % DAYS, mi = mk % MONTHS;
+  portENTER_CRITICAL(&histMux);
+  if (hist.dayTag[di] != day) { hist.dayTag[di] = day; hist.dayKwh[di] = 0; }
+  if (hist.monTag[mi] != mk) { hist.monTag[mi] = mk; hist.monKwh[mi] = 0; }
+  hist.dayKwh[di] += e;
+  hist.monKwh[mi] += e;
+  portEXIT_CRITICAL(&histMux);
+}
+double dayKwh(uint16_t day) { int i = day % DAYS; return hist.dayTag[i] == day ? hist.dayKwh[i] : 0; }
+double monthKwh(uint16_t mk) { int i = mk % MONTHS; return hist.monTag[i] == mk ? hist.monKwh[i] : 0; }
+
+// Adds energy to today, or holds it aside until the phone has set the clock.
+void addEnergy(double e) {
+  if (clockSet) histAdd((uint16_t)(g_localNow / 86400UL), e);
+  else preKwh += e;
+}
+
+// Runs in loop(): applies a time sent by the page and keeps the local clock running.
+void updateClock() {
+  uint64_t up = uptimeMs();
+  if (timePending) {
+    timePending = false;
+    tzMin = timeTz;
+    clockLocal = timeEpoch + (int32_t)tzMin * 60;
+    clockAtMs = up;
+    bool first = !clockSet;
+    clockSet = true;
+    g_localNow = clockLocal;
+    if (preKwh > 0) { histAdd((uint16_t)(clockLocal / 86400UL), preKwh); preKwh = 0; dirty = true; }
+    if (first) {
+      int y, m, d; civilFromDays(clockLocal / 86400UL, y, m, d);
+      Serial.printf("[clock] set to %04d-%02d-%02d %02lu:%02lu (UTC%+d min)\n", y, m, d,
+                    (unsigned long)(clockLocal % 86400UL / 3600), (unsigned long)(clockLocal % 3600 / 60), tzMin);
+    }
+  }
+  if (clockSet) {
+    g_localNow = clockLocal + (uint32_t)((up - clockAtMs) / 1000ULL);
+    uint16_t day = g_localNow / 86400UL;
+    g_todayKwh = dayKwh(day);
+    g_monthKwh = monthKwh(monthKey(day));
+  }
+}
 
 // ---------------- history rings (for the web page) ----------------
 #define R1_CAP 600      // 1 s steps, 10 minutes
@@ -385,6 +484,12 @@ void applyCal(const Cal &c) {
 }
 
 void saveEnergy() {
+  EnergyHist h;
+  portENTER_CRITICAL(&histMux);
+  h = hist;
+  portEXIT_CRITICAL(&histMux);
+  prefs.putBytes("hist", &h, sizeof(h));
+  prefs.putDouble("pre", preKwh);
   prefs.putFloat("kwh", (float)kWh);
   prefs.putFloat("on", (float)onSeconds);
   prefs.putFloat("max", maxP);
@@ -395,7 +500,12 @@ void updateStats() {
   uint32_t now = millis();
   if (lastMs) {
     float dt = (now - lastMs) / 1000.0f;
-    if (M.P > 0) { kWh += (double)M.P * dt / 3.6e6; dirty = true; }
+    if (M.P > 0) {
+      double e = (double)M.P * dt / 3.6e6;
+      kWh += e;
+      addEnergy(e);
+      dirty = true;
+    }
     if (M.I > 0) onSeconds += dt;
   }
   lastMs = now;
@@ -518,13 +628,16 @@ void pageEnergy() {
   char b[28];
   header("ENERGY", 4);
   u8g2.setFont(u8g2_font_6x12_tr);
-  snprintf(b, sizeof(b), "Energy %.4f kWh", kWh);   u8g2.drawStr(0, 23, b);
-  uint32_t s = (uint32_t)onSeconds;
-  snprintf(b, sizeof(b), "On %02lu:%02lu:%02lu", (unsigned long)(s / 3600), (unsigned long)((s / 60) % 60), (unsigned long)(s % 60));
-  u8g2.drawStr(0, 36, b);
-  float avg = (onSeconds > 1) ? (float)(kWh * 3.6e6 / onSeconds) : 0;
-  snprintf(b, sizeof(b), "Avg P %.1f W", avg);      u8g2.drawStr(0, 49, b);
-  snprintf(b, sizeof(b), "Max P %.1f W", maxP);     u8g2.drawStr(0, 63, b);
+  if (clockSet) {
+    snprintf(b, sizeof(b), "Today %.3f kWh", (float)g_todayKwh);   u8g2.drawStr(0, 23, b);
+    snprintf(b, sizeof(b), "Month %.2f kWh", (float)g_monthKwh);   u8g2.drawStr(0, 36, b);
+    snprintf(b, sizeof(b), "Month Rs %.2f", g_monthKwh * rateRs);  u8g2.drawStr(0, 49, b);
+  } else {
+    u8g2.drawStr(0, 23, "Clock not set:");
+    u8g2.drawStr(0, 36, "open the web page");
+    snprintf(b, sizeof(b), "Held %.3f kWh", preKwh);              u8g2.drawStr(0, 49, b);
+  }
+  snprintf(b, sizeof(b), "Total %.3f kWh", kWh);                   u8g2.drawStr(0, 63, b);
 }
 
 void pageConnect() {
@@ -598,12 +711,14 @@ void setupWeb() {
   server.on("/data", HTTP_GET, [](AsyncWebServerRequest *req) {
     Meas m = M;
     float avg = (onSeconds > 1) ? (float)(kWh * 3.6e6 / onSeconds) : 0;
-    char b[400];
+    char b[512];
     snprintf(b, sizeof(b),
              "{\"v\":%.1f,\"i\":%.3f,\"p\":%.1f,\"q\":%.1f,\"s\":%.1f,\"pf\":%.3f,\"phi\":%.1f,\"f\":%.2f,\"cf\":%.2f,"
-             "\"kwh\":%.5f,\"on\":%.0f,\"avg\":%.1f,\"max\":%.1f,\"up\":%lu,\"rate\":%.2f,\"inoise\":%.3f}",
+             "\"kwh\":%.5f,\"on\":%.0f,\"avg\":%.1f,\"max\":%.1f,\"up\":%lu,\"rate\":%.2f,\"inoise\":%.3f,"
+             "\"clk\":%d,\"td\":%.4f,\"mo\":%.3f}",
              m.V, m.I, m.P, m.Q, m.S, m.PF, m.phi, m.f, m.cf, kWh, onSeconds, avg, maxP,
-             (unsigned long)(millis() / 1000), rateRs, I_NOISE);
+             (unsigned long)(millis() / 1000), rateRs, I_NOISE,
+             g_localNow ? 1 : 0, (float)g_todayKwh, (float)g_monthKwh);
     AsyncWebServerResponse *r = req->beginResponse(200, "application/json", b);
     r->addHeader("Cache-Control", "no-store");
     req->send(r);
@@ -714,6 +829,47 @@ void setupWeb() {
     sendOk(req);
   });
 
+  server.on("/time", HTTP_POST, [](AsyncWebServerRequest *req) {
+    uint32_t ep = req->hasParam("epoch") ? (uint32_t)strtoul(req->getParam("epoch")->value().c_str(), nullptr, 10) : 0;
+    int tz = req->hasParam("tz") ? req->getParam("tz")->value().toInt() : 0;
+    if (ep < EPOCH_MIN || ep > 4000000000UL || tz < -720 || tz > 840) { sendErr(req, "The phone's clock looks wrong"); return; }
+    timeEpoch = ep;
+    timeTz = tz;
+    timePending = true;   // applied in loop()
+    sendOk(req);
+  });
+
+  server.on("/energy", HTTP_GET, [](AsyncWebServerRequest *req) {
+    EnergyHist h;
+    portENTER_CRITICAL(&histMux);
+    h = hist;
+    portEXIT_CRITICAL(&histMux);
+    uint32_t now = g_localNow;
+    // without a clock, show the history up to the newest day stored
+    uint16_t day = now / 86400UL;
+    if (!now) for (int k = 0; k < DAYS; k++) if (h.dayKwh[k] > 0 && h.dayTag[k] > day) day = h.dayTag[k];
+    uint16_t mk = monthKey(day);
+    AsyncResponseStream *r = req->beginResponseStream("application/json");
+    r->addHeader("Cache-Control", "no-store");
+    r->printf("{\"set\":%d,\"now\":%lu,\"day\":%u,\"month\":%u,\"pre\":%.4f,\"rate\":%.2f,\"days\":[",
+              now ? 1 : 0, (unsigned long)now, (unsigned)day, (unsigned)mk, preKwh, rateRs);
+    for (int k = 0; k < DAYS; k++) {
+      uint16_t d = day - (DAYS - 1) + k;
+      int i = d % DAYS;
+      if (k) r->print(',');
+      if (d && h.dayTag[i] == d && d <= day) r->printf("%.4f", h.dayKwh[i]); else r->print("null");
+    }
+    r->print("],\"months\":[");
+    for (int k = 0; k < MONTHS; k++) {
+      uint16_t q = mk - (MONTHS - 1) + k;
+      int i = q % MONTHS;
+      if (k) r->print(',');
+      if (h.monTag[i] == q) r->printf("%.3f", h.monKwh[i]); else r->print("null");
+    }
+    r->print("]}");
+    req->send(r);
+  });
+
   server.on("/pin", HTTP_POST, [](AsyncWebServerRequest *req) {
     const char *e = reqPin(req);
     if (e) { sendErr(req, e); return; }
@@ -765,6 +921,8 @@ void setup() {
 
   prefs.begin("powerscope", false);
   kWh = prefs.getFloat("kwh", 0);
+  preKwh = prefs.getDouble("pre", 0);
+  if (prefs.getBytesLength("hist") == sizeof(hist)) prefs.getBytes("hist", &hist, sizeof(hist));
   onSeconds = prefs.getFloat("on", 0);
   maxP = prefs.getFloat("max", 0);
   rateRs = prefs.getFloat("rate", 7.0f);
@@ -796,6 +954,7 @@ void loop() {
   handleRequests();
 
   measure();       // a skipped window simply keeps the last good values
+  updateClock();
   updateStats();
 
   int page = (millis() / PAGE_MS) % PAGES;

@@ -9,6 +9,7 @@ struct Preferences{
   template<class T> size_t put(const char*k,const T&v){const uint8_t*p=(const uint8_t*)&v;m[k]=std::vector<uint8_t>(p,p+sizeof(T));return sizeof(T);}
   template<class T> T get(const char*k,T d){auto it=m.find(k);if(it==m.end()||it->second.size()!=sizeof(T))return d;T v;memcpy(&v,it->second.data(),sizeof(T));return v;}
   float getFloat(const char*k,float d){return get(k,d);}   size_t putFloat(const char*k,float v){return put(k,v);}
+  double getDouble(const char*k,double d){return get(k,d);} size_t putDouble(const char*k,double v){return put(k,v);}
   int32_t getInt(const char*k,int32_t d){return get(k,d);} size_t putInt(const char*k,int32_t v){return put(k,v);}
   String getString(const char*k,const char*d){auto it=m.find(k);if(it==m.end())return String(d);return String(std::string(it->second.begin(),it->second.end()).c_str());}
   size_t putString(const char*k,const char*v){m[k]=std::vector<uint8_t>(v,v+strlen(v));return strlen(v);}

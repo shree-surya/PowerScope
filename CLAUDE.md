@@ -25,6 +25,8 @@ GPIO34/35 are ADC1, input-only: correct for WiFi use. Do not use ADC2 pins.
 - Scope arrays: two cycles (320 samples) starting on a rising voltage crossing.
 - History rings for the web page: 1 s x 600, 5 s x 720, 30 s x 720 (RAM only, lost on reboot).
 - Energy, load-on time, max power and the tariff are saved to flash (Preferences "powerscope") at most every 10 minutes. There is no energy reset (the owner removed it).
+- Energy history: the ESP32 has no battery clock. The page sends the phone's time (`POST /time`) whenever /data says `clk:0`, i.e. after every power-up. Until then energy goes to `preKwh` (flash key "pre") and is added to the day the clock arrives on. Local time is kept from a 64-bit uptime in loop(), so it survives the 49-day millis() wrap.
+- 62 day slots and 12 month slots in one struct (flash blob "hist"), indexed by day number % 62 and (year*12 + month) % 12, each tagged with its day or month, so a stale slot is simply ignored. Saved with the energy total, every 10 minutes. Days and months are calendar days in the phone's time zone; billing is the calendar month (1st to last day). The web task copies the struct under a portMUX.
 
 ## Calibration (flash keys vgain, itrim, shift, isign, inoise; defaults at the top of PowerScope.ino)
 Set from the Calibrate section of the page, behind a 4-digit PIN (flash key "pin", default 1234; five wrong tries lock it for 60 s). Restore defaults puts the five values back and leaves the PIN alone. Changes are applied in loop() between windows. Changing I_TRIM rescales I_NOISE by the same factor, since the noise was measured in amps.
@@ -45,7 +47,9 @@ With WiFi on, loads under about 0.17 to 0.2 A (roughly 40 W) cannot be read reli
 | Route | |
 |---|---|
 | GET / | gzip page from web_index.h, ETag, no-cache |
-| GET /data | v,i,p,q,s,pf,phi,f,cf,kwh,on,avg,max,up,rate,inoise |
+| GET /data | v,i,p,q,s,pf,phi,f,cf,kwh,on,avg,max,up,rate,inoise, clk (clock set), td (today kWh), mo (this month kWh) |
+| POST /time?epoch=&tz= | phone clock, UTC seconds and minutes east of UTC; epochs before 2024 are refused |
+| GET /energy | {set,now,day,month,pre,rate,days[62],months[12]}, oldest first, null = no data. day is a day number (days since 1970, local), month is year*12 + month (0-11). Without a clock, day is the newest stored day |
 | GET /history?r=60 / 600 / 3600 / 21600 | {dt,v[],i[],p[]}, newest last |
 | GET /scope | {v[],i[]}, 320 samples, volts and amps |
 | POST /rate?x= | tariff in rupees per kWh |
@@ -59,14 +63,16 @@ With WiFi on, loads under about 0.17 to 0.2 A (roughly 40 W) cannot be read reli
 The page falls back to demo data only if it has never reached the device. Once it has seen live data it shows "Offline" instead, so fake numbers can never pass as real.
 No internet in AP mode: no CDN, no Google Fonts. Bai Jamjuree (500, 700) is embedded as base64 WOFF2. Palette: bg #0F1115, voltage #35D0FF, current #FF8A3D, power #B6F24A.
 
+Page: today, this month, a month-end estimate (this month so far plus the average rate since data began this month, to the month end), total measured, a 30-day and a 12-month bar chart with tooltips, and a client-side CSV of days and months. One flat tariff.
+
 ## Agreed next tasks
-1. **Energy history and bill estimate.** Phone sends the time when the page opens (`POST /time?epoch=&tz=`), device keeps it with millis(). Energy used before the first time sync is held aside and added to "today" when the time arrives. Keep 62 days and 12 months in flash. Show today and this month in kWh and rupees, a 30-day chart, a 12-month chart, CSV download (client side), and a month-end projection. Flat rate only. Calendar-month billing (1st to last day), no start-day option.
-2. Update the project page in docs/ for the modular-plate layout (docs/hardware-layout.md): no clear cover, new module order.
-3. Optional noise work: decoupling caps, ACS712-5A, median filter.
+1. Update the project page in docs/ for the modular-plate layout (docs/hardware-layout.md): no clear cover, new module order.
+2. Optional noise work: decoupling caps, ACS712-5A, median filter.
 
 ## Testing
 - `sh tests/host/run.sh` builds the real PowerScope.ino against stubs and feeds it synthetic waves with noise: idle, bursts, 0.39 A air cooler, 2 A heater, small load, and the zero calibration. The stubs keep Preferences in a map (setup() again acts as a reboot) and keep the web routes, so `call("/cal", HTTP_POST, {{"pin","1234"},...})` runs a real handler; `settle(n)` runs n windows plus the loop work. The run ends with pass/fail checks and exits non-zero on a failure. Extend the stubs when adding firmware features. Last run: idle shows 0 A and 0 kWh, the cooler reads 0.387 A at PF 0.82, the heater 1.998 A.
 - The web page was exercised in jsdom with a mocked device (demo mode, live mode, canvases, range buttons). It has not been looked at on every phone.
+- Firmware 1.2.0 (calibration) and 1.3.0 (energy history) are checked only by the host build and the page in a headless browser against a mock device; they have not been compiled with the ESP32 core or run on the board yet.
 - Not yet verified on hardware: heavy simultaneous phone connections, the timing guard rate with several clients, ACS712 heating near 6 A.
 - Dev unit uses a 20A ACS712 and the owner's own air cooler as the first load. Calibrate current on a resistive load.
 
