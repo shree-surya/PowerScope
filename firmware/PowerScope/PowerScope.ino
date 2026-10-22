@@ -137,6 +137,21 @@ float    rateRs = 7.0f;
 uint32_t lastMs = 0, lastSave = 0;
 bool     dirty = false;
 
+// ---------------- history rings (for the web page) ----------------
+#define R1_CAP 600      // 1 s steps, 10 minutes
+#define R2_CAP 720      // 5 s steps, 1 hour
+#define R3_CAP 720      // 30 s steps, 6 hours
+struct Ring { uint16_t *v; uint16_t *i; int16_t *p; int cap; int dt; volatile int head; volatile int count; };
+static uint16_t a1v[R1_CAP], a1i[R1_CAP]; static int16_t a1p[R1_CAP];
+static uint16_t a2v[R2_CAP], a2i[R2_CAP]; static int16_t a2p[R2_CAP];
+static uint16_t a3v[R3_CAP], a3i[R3_CAP]; static int16_t a3p[R3_CAP];
+Ring ring1 = { a1v, a1i, a1p, R1_CAP, 1, 0, 0 };
+Ring ring5 = { a2v, a2i, a2p, R2_CAP, 5, 0, 0 };
+Ring ring30 = { a3v, a3i, a3p, R3_CAP, 30, 0, 0 };
+
+struct Acc { double v = 0, i = 0, p = 0; int n = 0; uint32_t t0 = 0; };
+Acc acc1, acc5, acc30;
+
 // ---------------- clock (from the phone) and energy history (kept in flash) ----------------
 const int DAYS = 62, MONTHS = 12;
 const uint32_t EPOCH_MIN = 1704067200UL;   // 2024-01-01: a phone clock before this is wrong
@@ -227,21 +242,6 @@ void updateClock() {
     g_monthKwh = monthKwh(monthKey(day));
   }
 }
-
-// ---------------- history rings (for the web page) ----------------
-#define R1_CAP 600      // 1 s steps, 10 minutes
-#define R2_CAP 720      // 5 s steps, 1 hour
-#define R3_CAP 720      // 30 s steps, 6 hours
-struct Ring { uint16_t *v; uint16_t *i; int16_t *p; int cap; int dt; volatile int head; volatile int count; };
-static uint16_t a1v[R1_CAP], a1i[R1_CAP]; static int16_t a1p[R1_CAP];
-static uint16_t a2v[R2_CAP], a2i[R2_CAP]; static int16_t a2p[R2_CAP];
-static uint16_t a3v[R3_CAP], a3i[R3_CAP]; static int16_t a3p[R3_CAP];
-Ring ring1 = { a1v, a1i, a1p, R1_CAP, 1, 0, 0 };
-Ring ring5 = { a2v, a2i, a2p, R2_CAP, 5, 0, 0 };
-Ring ring30 = { a3v, a3i, a3p, R3_CAP, 30, 0, 0 };
-
-struct Acc { double v = 0, i = 0, p = 0; int n = 0; uint32_t t0 = 0; };
-Acc acc1, acc5, acc30;
 
 void ringPush(Ring &r, float v, float i, float p) {
   int h = r.head;

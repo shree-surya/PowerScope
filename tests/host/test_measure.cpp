@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <vector>
 uint64_t fakeT=1000; double VPK_MV, IPK_MV, PHI, NOISE_SD, SPIKE_P;
-#include "../../firmware/PowerScope/PowerScope.ino"
+#include "build/PowerScope.ino"   // the sketch with IDE-style declarations, made by run.sh
 static void load(double amps,double pf,double sd){
   VPK_MV = 230/0.946*sqrt(2.0);
   IPK_MV = amps*sqrt(2.0)*(2.0/3.0*100.0);
